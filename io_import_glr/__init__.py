@@ -6,8 +6,8 @@ bl_info = {
     "location": "File > Import",
     "description": "Import GLR",
     "warning": "",
-    "doc_url": "https://github.com/Luctaris/GLideN64/wiki",
-    "tracker_url": "https://github.com/Luctaris/GLideN64/issues",
+    "doc_url": "https://github.com/Luctaris/blender-import-glr/",
+    "tracker_url": "https://github.com/Luctaris/blender-import-glr/issues",
     "category": "Import-Export",
 }
 

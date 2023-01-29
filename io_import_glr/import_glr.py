@@ -16,7 +16,6 @@ class TxWrapMode(Enum):
     WC: WRAP/CLAMP
     MC: MIRROR/CLAMP
     NT: NOTEXTURE
-    FT: FILTERED
     """
     WN_WN = 0
     WN_MN = 1
