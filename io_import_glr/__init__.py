@@ -21,8 +21,8 @@ from math import radians
 import bpy
 import bmesh
 from bpy_extras.io_utils import ImportHelper
-from bpy.props import StringProperty, BoolProperty, BoolVectorProperty, EnumProperty, FloatVectorProperty, CollectionProperty
-from bpy.types import Operator, Panel, OperatorFileListElement
+from bpy.props import StringProperty, BoolProperty, EnumProperty, FloatProperty, BoolVectorProperty, FloatVectorProperty, CollectionProperty
+from bpy.types import Panel, Operator, OperatorFileListElement
 
 WM_ENUMS = (
         ("WN_WN", "WN_WN (0)", "Wrap No-Clamp / Wrap No-Clamp"),
@@ -158,6 +158,16 @@ class GLR_OT_ImportGLR(Operator, ImportHelper):
         name="Merge Triangles",
         description="Remove vertice doubles after import",
         default=True
+    )
+
+    merge_distance: FloatProperty(
+        name="dist",
+        description="Distance to merge doubles by",
+        min=0.0,
+        soft_min=0.0,
+        precision=6,
+        step=1,
+        default=0.001
     )
 
     enable_srgb: BoolProperty(
@@ -377,9 +387,10 @@ class GLR_PT_scene(Panel):
         layout = self.layout
         sfile = context.space_data
         operator = sfile.active_operator
+        layout.prop(operator, "fog_enable")
         row = layout.row()
-        row.prop(operator, "fog_enable")
         row.prop(operator, "merge_doubles")
+        row.prop(operator, "merge_distance")
         layout.prop(operator, "enable_srgb")
         layout.prop(operator, "enable_mat_transparency")
         layout.prop(operator, "enable_bf_culling")

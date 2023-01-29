@@ -650,16 +650,16 @@ def genBpyObjMesh(context, file_data, bpy_data_lists, curr_glr_filepath, filenam
                 addTxToMatIdx(mat_global_idx, tx_names, tri_data[i].getT1WrapMode(), curr_glr_filepath)
     return glr_obj
 
-def performObjTransformations(glr_obj, transform_vectors, perform_merge_triangles):
+def performObjTransformations(glr_obj, transform_vectors, merge_options):
     curr_location = glr_obj.location
     glr_obj.location = curr_location + transform_vectors[0]
     glr_obj.rotation_euler = transform_vectors[1]
     glr_obj.scale = transform_vectors[2]
-    if perform_merge_triangles:
+    if merge_options[0]:
         glr_obj_mesh = glr_obj.data
         bm = bmesh.new()
         bm.from_mesh(glr_obj_mesh)
-        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.001)
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=merge_options[1])
         bm.to_mesh(glr_obj_mesh)
         bm.free()
 
@@ -978,9 +978,14 @@ def load_glr(context, curr_glr_filepath, filename_no_ext, **keywords):
     (
         keywords["move"],
         keywords["rotation"],
-        keywords["scale"],
+        keywords["scale"]
     )
-    performObjTransformations(glr_obj, transform_vectors, keywords["merge_doubles"])
+    merge_options = \
+    (
+        keywords["merge_doubles"],
+        keywords["merge_distance"]
+    )
+    performObjTransformations(glr_obj, transform_vectors, merge_options)
     if keywords["fog_enable"]:
         genFogBoundingBox(context, glr_obj, file_data[0].fog_color)
     if keywords["enable_srgb"]:
