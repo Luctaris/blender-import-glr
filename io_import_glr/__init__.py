@@ -120,7 +120,7 @@ class GLR_OT_ImportGLR(Operator, ImportHelper):
     filename_ext = ".glr"
 
     filter_glob: StringProperty(
-        default="*.glr;*.png",
+        default="*.glr",
         options={"HIDDEN"},
         maxlen=255
     )
