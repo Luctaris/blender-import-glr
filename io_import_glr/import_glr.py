@@ -41,7 +41,7 @@ class GlrImporter:
     def __init__(self, fb, texture_dir):
         self.fb = fb
         self.texture_dir = texture_dir
-        self.romname = None
+        self.obj_name = None
         self.num_tris = None
         self.microcode = None
 
@@ -67,7 +67,7 @@ class GlrImporter:
         romname = romname.decode(errors='replace')
         romname = romname.replace('\0', '').strip()
         romname = romname or 'Unknown N64 Game'
-        self.romname = romname
+        self.obj_name = romname + ' (' + os.path.basename(fb.name)[:-4] + ')'
 
         self.num_tris = struct.unpack('<I', fb.read(4))[0]
         self.microcode = struct.unpack('<I', fb.read(4))[0]
@@ -146,7 +146,7 @@ class GlrImporter:
             face_materials.append(material_index)
 
         # Create mesh
-        mesh = bpy.data.meshes.new(self.romname)
+        mesh = bpy.data.meshes.new(self.obj_name)
         mesh.from_pydata(verts, [], faces)
 
         # Create & assign materials
@@ -750,7 +750,6 @@ def get_texture_filter(other_mode):
 def get_texture_wrap_mode(wrap):
     # bit 0 = MIRROR
     # bit 1 = CLAMP
-    print(wrap)
     if wrap == 0:   return 'Repeat'
     elif wrap == 1: return 'Mirror'
     elif wrap == 2: return 'Clamp'
