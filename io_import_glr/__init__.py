@@ -1,7 +1,7 @@
 bl_info = {
     "name": "GLideN64 Rip (GLR) Importer",
     "author": "Luctaris",
-    "version": (1, 0, 0),
+    "version": (1, 0, 1),
     "blender": (2, 80, 0),
     "location": "File > Import",
     "description": "Import GLR",
@@ -83,32 +83,6 @@ class GLR_OT_FilterHelper_TextureList(Operator):
 
     def execute(self, context):
         self.scan_polygons(context)
-        return {'FINISHED'}
-
-class GLR_OT_FilterHelper_FileBrowser(Operator):
-    """Add selected textures to filter list"""
-    bl_idname = "import_glr.add_filter_textures"
-    bl_label = "Add Textures"
-
-    @classmethod
-    def poll(cls, context):
-        sfile = context.space_data
-        if sfile.type != "FILE_BROWSER":
-            return False
-        operator = sfile.active_operator
-        return operator.bl_idname == "IMPORT_SCENE_OT_glr"
-
-    def execute(self, context):
-        #print(context.space_data.params.directory)
-        if len(context.space_data.active_operator.files) != 0:
-            currList = context.space_data.active_operator.filter_options.split(',')
-            for file in context.space_data.active_operator.files:
-                if file.name[-4:] != ".png" or file.name[:-4] in currList:
-                    continue
-                if len(context.space_data.active_operator.filter_options) != 0:
-                    context.space_data.active_operator.filter_options += (',' + file.name[:-4])
-                else:
-                    context.space_data.active_operator.filter_options += (file.name[:-4])
         return {'FINISHED'}
 
 class GLR_OT_ImportGLR(Operator, ImportHelper):
@@ -440,7 +414,6 @@ class GLR_PT_filter(Panel):
         operator = sfile.active_operator
         row = layout.row()
         row.prop(operator, "filter_mode")
-        row.operator(GLR_OT_FilterHelper_FileBrowser.bl_idname)
         layout.prop(operator, "filter_options", icon='TEXTURE')
         layout.prop(operator, "remove_no_textures")
 
@@ -482,7 +455,6 @@ def menu_func_import(self, context):
     self.layout.operator(GLR_OT_ImportGLR.bl_idname, text="GLideN64 Rip (.glr)")
 
 CLASSES = (
-    GLR_OT_FilterHelper_FileBrowser,
     GLR_OT_FilterHelper_TextureList,
     GLR_OT_ImportGLR,
     GLR_PT_transform,

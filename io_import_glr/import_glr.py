@@ -5,12 +5,12 @@ import bpy
 
 ### Import Plugin Entry Point
 def load(context, **keywords):
-    dir_name = os.path.dirname(keywords["filepath"])
+    dir_name = os.path.dirname(keywords['filepath'])
     obs = []
 
-    for glr_file in keywords["files"]:
-        if glr_file.name[-4:] != ".glr":
-            print("INFO: %s is not a .glr file! Skipping..." % abs_filepath)
+    for glr_file in keywords['files']:
+        if glr_file.name[-4:] != '.glr':
+            print(f'INFO: {abs_filepath} is not a .glr file! Skipping...')
             continue
 
         filepath = os.path.join(dir_name, glr_file.name)
@@ -18,7 +18,7 @@ def load(context, **keywords):
         obs.append(ob)
 
     if not obs:
-        raise RuntimeError("No .glr files have been selected for import!")
+        raise RuntimeError('No .glr files have been selected for import!')
 
     # Objects created by op are selected, active, and placed at cursor
     if bpy.ops.object.select_all.poll():
@@ -33,7 +33,7 @@ def load(context, **keywords):
 
 def load_glr(filepath):
     texture_dir = os.path.abspath(os.path.dirname(filepath))
-    with open(filepath, "rb") as fb:
+    with open(filepath, 'rb') as fb:
         return GlrImporter(fb, texture_dir).load()
 
 
@@ -54,23 +54,23 @@ class GlrImporter:
 
         # Check magic
         if fb.read(6) != b'GL64R\0':
-            raise RuntimeError("Not a valid N64 scene rip file")
+            raise RuntimeError('Not a valid glr file')
 
         # Check version
-        version = struct.unpack("<H", fb.read(2))[0]
-        if version == 1:
-            raise RuntimeError("N64 Ripper version 1 not supported")
+        version = struct.unpack('<H', fb.read(2))[0]
+        if version > 0 and version < 2:
+            raise RuntimeError(f'Outdated glr file format detected ({version}), please update the glr import addon')
         elif version != 2:
-            raise RuntimeError("Unknown N64 Ripper version (%d) encountered" % version)
+            raise RuntimeError(f'Unknown N64 Ripper version ({version}) encountered')
 
         romname = fb.read(20)
-        romname = romname.decode(errors="replace")
-        romname = romname.replace("\0", "").strip()
-        romname = romname or "Unknown N64 Game"
+        romname = romname.decode(errors='replace')
+        romname = romname.replace('\0', '').strip()
+        romname = romname or 'Unknown N64 Game'
         self.romname = romname
 
-        self.num_tris = struct.unpack("<I", fb.read(4))[0]
-        self.microcode = struct.unpack("<I", fb.read(4))[0]
+        self.num_tris = struct.unpack('<I', fb.read(4))[0]
+        self.microcode = struct.unpack('<I', fb.read(4))[0]
 
     def do_tris(self):
         fb = self.fb
@@ -95,7 +95,7 @@ class GlrImporter:
             for _ in range(3):
                 (
                     x, y, z, r, g, b, a, s0, t0, s1, t1,
-                ) = struct.unpack("<11f", fb.read(44))
+                ) = struct.unpack('<11f', fb.read(44))
 
                 shade_colors += [r, g, b, a]
                 uvs0 += [s0, t0]
@@ -124,7 +124,7 @@ class GlrImporter:
                 tex1_crc,
                 tex1_maskS, tex1_maskT,
                 tex1_wrapS, tex1_wrapT,
-            ) = struct.unpack("<4f4f4f4f2f2f2iQQIQ4BQ4B", fb.read(132))
+            ) = struct.unpack('<4f4f4f4f2f2f2iQQIQ4BQ4B', fb.read(132))
 
             # Store per-tri colors as vertex colors (once per corner)
             prim_colors += [prim_r, prim_g, prim_b, prim_a] * 3
@@ -152,16 +152,16 @@ class GlrImporter:
         # Create & assign materials
         for matinfo in matinfo_cache:
             mesh.materials.append(self.create_material(matinfo))
-        mesh.polygons.foreach_set("material_index", face_materials)
+        mesh.polygons.foreach_set('material_index', face_materials)
 
         # Create attributes
-        mesh.vertex_colors.new(name="Shading").data.foreach_set("color", shade_colors)
-        mesh.vertex_colors.new(name="Primitive").data.foreach_set("color", prim_colors)
-        mesh.vertex_colors.new(name="Environment").data.foreach_set("color", env_colors)
-        mesh.vertex_colors.new(name="Blend").data.foreach_set("color", blend_colors)
-        mesh.vertex_colors.new(name="Fog").data.foreach_set("color", fog_colors)
-        mesh.uv_layers.new(name="UV1").data.foreach_set("uv", uvs0)
-        mesh.uv_layers.new(name="UV2").data.foreach_set("uv", uvs1)
+        mesh.vertex_colors.new(name='Shading').data.foreach_set('color', shade_colors)
+        mesh.vertex_colors.new(name='Primitive').data.foreach_set('color', prim_colors)
+        mesh.vertex_colors.new(name='Environment').data.foreach_set('color', env_colors)
+        mesh.vertex_colors.new(name='Blend').data.foreach_set('color', blend_colors)
+        mesh.vertex_colors.new(name='Fog').data.foreach_set('color', fog_colors)
+        mesh.uv_layers.new(name='UV1').data.foreach_set('uv', uvs0)
+        mesh.uv_layers.new(name='UV2').data.foreach_set('uv', uvs1)
 
         mesh.validate()
 
@@ -193,32 +193,54 @@ class GlrImporter:
 
         def make_tex_dict(crc, wrapS, wrapT):
             tex = {}
-            tex["filepath"] = self.get_texture_path_for_crc(crc)
-            tex["filter"] = get_texture_filter(other_mode)
-            tex["wrapS"] = get_texture_wrap_mode(wrapS)
-            tex["wrapT"] = get_texture_wrap_mode(wrapT)
+            tex['filepath'] = self.get_texture_path_for_crc(crc)
+            tex['filter'] = get_texture_filter(other_mode)
+            tex['wrapS'] = get_texture_wrap_mode(wrapS)
+            tex['wrapT'] = get_texture_wrap_mode(wrapT)
+            tex['wrapST'] = get_combined_texture_wrap_modes(tex['wrapS'][0], tex['wrapT'][0])
+            tex['crc'] = crc
             return tex
+
         tex0 = make_tex_dict(tex0_crc, tex0_wrapS, tex0_wrapT)
         tex1 = make_tex_dict(tex1_crc, tex1_wrapS, tex1_wrapT)
-        tex0["uv_map"] = "UV1"
-        tex1["uv_map"] = "UV2"
+        tex0['uv_map'] = 'UV1'
+        tex1['uv_map'] = 'UV2'
 
-        mat = bpy.data.materials.new("N64 RDP")
-        setup_n64_material(
-            mat,
-            combiner1, combiner2,
-            blender1, blender2,
-            tex0, tex1,
-            cull_backfacing=bool(geometry_mode & 0x2000),  # TODO
-        )
+        mat_name = self.get_material_name_for_crcs_and_wrapmodes([tex0_crc, tex1_crc], [tex0['wrapST'], tex1['wrapST']])
+
+        found_mat_index = bpy.data.materials.find(mat_name)
+
+        if found_mat_index != -1:
+            mat = bpy.data.materials[found_mat_index]
+        else:
+            mat = bpy.data.materials.new(mat_name)
+            setup_n64_material(
+                mat,
+                combiner1, combiner2,
+                blender1, blender2,
+                tex0, tex1,
+                cull_backfacing=bool(geometry_mode & 0x2000),  # TODO
+            )
         return mat
 
     def get_texture_path_for_crc(self, crc):
         if crc != 0:
-            return os.path.join(self.texture_dir, "%016lX.png" % crc)
+            return os.path.join(self.texture_dir, f'{crc:016X}.png')
         else:
-            return ""
+            return ''
 
+    def get_material_name_for_crcs_and_wrapmodes(self, tex_crc, tex_wrapmodes):
+        if tex_crc[0] == 0: # Either invalid crc combo (tex0_crc == 0, tex1_crc != 0), or both crcs are null (0)
+            return 'NO_TEXTURE'
+        returning_str = ''
+        for i in range(2):
+            if tex_crc[i] != 0:
+                if i == 1:
+                    returning_str += ' : ' # using T1, add material seperator
+                returning_str += f'{tex_crc[i]:016X}'
+                if tex_wrapmodes[i] != 'R': # if both wrap S and T are Repeat, don't include wrapmode indicator
+                    returning_str += f'({tex_wrapmodes[i]})'
+        return returning_str
 
 # Imported materials are supposed to perform (highly simplified) high
 # level emulation of the N64's RDP pixel shader pipeline.
@@ -300,10 +322,10 @@ def setup_n64_material(
 
     # 1st Color Combiner cycle
 
-    input_map["Combined Color"] = 1.0
-    input_map["Combined Alpha"] = 1.0
+    input_map['Combined Color'] = 1.0
+    input_map['Combined Alpha'] = 1.0
 
-    node_comb1 = nodes.new("ShaderNodeGroup")
+    node_comb1 = nodes.new('ShaderNodeGroup')
     node_comb1.width = 220
     node_comb1.location = x, y
     x, y = x + 400, y - 200
@@ -312,18 +334,18 @@ def setup_n64_material(
     for i in range(8):
         connect_input(mat, input_map[combiner1[i]], node_comb1.inputs[i])
 
-    input_map["Combined Color"] = node_comb1.outputs[0]
-    input_map["Combined Alpha"] = node_comb1.outputs[1]
+    input_map['Combined Color'] = node_comb1.outputs[0]
+    input_map['Combined Alpha'] = node_comb1.outputs[1]
 
     # 2nd Color Combiner cycle
 
     # Skip the 2nd cycle if it does nothing; two-cycle mode is probably
     # only enabled for a blender effect.
-    if combiner2 == ("0", "0", "0", "Combined Color", "0", "0", "0", "Combined Alpha"):
+    if combiner2 == ('0', '0', '0', 'Combined Color', '0', '0', '0', 'Combined Alpha'):
         combiner2 = None
 
     if combiner2:
-        node_comb2 = nodes.new("ShaderNodeGroup")
+        node_comb2 = nodes.new('ShaderNodeGroup')
         node_comb2.width = 220
         node_comb2.location = x, y
         x, y = x + 400, y - 200
@@ -332,8 +354,8 @@ def setup_n64_material(
         for i in range(8):
             connect_input(mat, input_map[combiner2[i]], node_comb2.inputs[i])
 
-        input_map["Combined Color"] = node_comb2.outputs[0]
-        input_map["Combined Alpha"] = node_comb2.outputs[1]
+        input_map['Combined Color'] = node_comb2.outputs[0]
+        input_map['Combined Alpha'] = node_comb2.outputs[1]
 
     # Next the blender
     # It's poorly implemented atm...
@@ -342,44 +364,44 @@ def setup_n64_material(
 
     # Handle some cases where the blender formula is particularly simple
     # TODO: disable until fog is correctly implemented
-    """
+    '''
     node_blnd1 = make_simple_blender_lerp_node(mat, blender1, input_map)
     if blender2:
         node_blnd2 = make_simple_blender_lerp_node(mat, blender2, input_map)
-    """
+    '''
 
     # If the last step of the blender reads the framebuffer color at
     # all, we crudely assume it's doing alpha blending
     last_blender = blender2 or blender1  # whichever comes last
-    if "Framebuffer Color" in last_blender:
+    if 'Framebuffer Color' in last_blender:
         node_mixtr = nodes.new('ShaderNodeMixShader')
         node_trans = nodes.new('ShaderNodeBsdfTransparent')
 
-        connect_input(mat, input_map["Combined Alpha"], node_mixtr.inputs[0])
+        connect_input(mat, input_map['Combined Alpha'], node_mixtr.inputs[0])
         connect_input(mat, node_trans.outputs[0], node_mixtr.inputs[1])
-        connect_input(mat, input_map["Combined Color"], node_mixtr.inputs[2])
+        connect_input(mat, input_map['Combined Color'], node_mixtr.inputs[2])
 
         node_trans.location = x, y - 100
         node_mixtr.location = x + 200, y
         x, y = x + 500, y
 
-        input_map["Combined Color"] = node_mixtr.outputs[0]
+        input_map['Combined Color'] = node_mixtr.outputs[0]
 
         mat.blend_method = 'HASHED'
 
     # TODO: alpha compare
 
-    node_out = nodes.new("ShaderNodeOutputMaterial")
+    node_out = nodes.new('ShaderNodeOutputMaterial')
     node_out.location = x, y
-    links.new(input_map["Combined Color"], node_out.inputs[0])
+    links.new(input_map['Combined Color'], node_out.inputs[0])
 
     # Custom props (useful for debugging)
-    mat["n64:01 Color Combiner"] = show_combiner_formula(*combiner1[:4])
-    mat["n64:02 Alpha Combiner"] = show_combiner_formula(*combiner1[4:])
-    mat["n64:03 2nd Color Combiner"] = show_combiner_formula(*combiner2[:4]) if combiner2 else ""
-    mat["n64:04 2nd Alpha Combiner"] = show_combiner_formula(*combiner2[4:]) if combiner2 else ""
-    mat["n64:05 Blender"] = show_blender_formula(*blender1)
-    mat["n64:06 2nd Blender"] = show_blender_formula(*blender2) if blender2 else ""
+    mat['n64:01 Color Combiner'] = show_combiner_formula(*combiner1[:4])
+    mat['n64:02 Alpha Combiner'] = show_combiner_formula(*combiner1[4:])
+    mat['n64:03 2nd Color Combiner'] = show_combiner_formula(*combiner2[:4]) if combiner2 else ''
+    mat['n64:04 2nd Alpha Combiner'] = show_combiner_formula(*combiner2[4:]) if combiner2 else ''
+    mat['n64:05 Blender'] = show_blender_formula(*blender1)
+    mat['n64:06 2nd Blender'] = show_blender_formula(*blender2) if blender2 else ''
 
 
 def connect_input(mat, input, socket):
@@ -410,41 +432,42 @@ def make_rdp_input_nodes(mat, sources, tex0, tex1, location):
 
     # Texture inputs
     for i in range(2):
-        if f"Texel {i} Color" in sources or f"Texel {i} Alpha" in sources:
-            tex = tex0 if i == 0 else tex1
-            node = make_texture_node(mat, tex, location=(x, y))
+        tex = tex0 if i == 0 else tex1
+        if f'Texel {i} Color' in sources or f'Texel {i} Alpha' in sources:
+            if tex['crc'] != 0:
+                node = make_texture_node(mat, tex, location=(x, y))
             y -= 300
-            input_map[f"Texel {i} Color"] = node.outputs["Color"]
-            input_map[f"Texel {i} Alpha"] = node.outputs["Alpha"]
+            input_map[f'Texel {i} Color'] = node.outputs['Color']
+            input_map[f'Texel {i} Alpha'] = node.outputs['Alpha']
 
     # Vertex Color inputs
-    for vc in ["Shading", "Primitive", "Environment", "Blend", "Fog"]:
-        if f"{vc} Color" in sources or f"{vc} Alpha" in sources:
-            node = nodes.new("ShaderNodeVertexColor")
+    for vc in ['Shading', 'Primitive', 'Environment', 'Blend', 'Fog']:
+        if f'{vc} Color' in sources or f'{vc} Alpha' in sources:
+            node = nodes.new('ShaderNodeVertexColor')
             node.location = x, y
             y -= 200
             node.layer_name = vc
-            input_map[f"{vc} Color"] = node.outputs["Color"]
-            input_map[f"{vc} Alpha"] = node.outputs["Alpha"]
+            input_map[f'{vc} Color'] = node.outputs['Color']
+            input_map[f'{vc} Alpha'] = node.outputs['Alpha']
 
     # Not yet implemented
     unimplemented = [
-        "Key Center",
-        "Key Scale",
-        "LOD Fraction",
-        "Primitive LOD Fraction",
-        "Noise",
-        "Convert K4",
-        "Convert K5",
+        'Key Center',
+        'Key Scale',
+        'LOD Fraction',
+        'Primitive LOD Fraction',
+        'Noise',
+        'Convert K4',
+        'Convert K5',
     ]
     for un_src in unimplemented:
         if un_src in sources:
-            print("Unimplemented color combiner input:", un_src)
-            node = nodes.new("ShaderNodeRGB")
+            print('Unimplemented color combiner input:', un_src)
+            node = nodes.new('ShaderNodeRGB')
             node.location = x, y
             y += 300
             node.outputs[0].default_value = (0.0, 1.0, 1.0, 1.0)
-            node.label = f"UNIMPLEMENTED {un_src}"
+            node.label = f'UNIMPLEMENTED {un_src}'
             input_map[un_src] = node.outputs[0]
 
     return input_map
@@ -468,18 +491,18 @@ def make_texture_node(mat, tex, location):
     x, y = location
 
     # Image Texture node
-    node_tex = nodes.new("ShaderNodeTexImage")
+    node_tex = nodes.new('ShaderNodeTexImage')
     node_tex.width = 290
     node_tex.location = x - 150, y
-    if tex["filepath"]:
-        node_tex.image = load_image(tex["filepath"])
+    if tex['filepath']:
+        node_tex.image = load_image(tex['filepath'])
     node_tex.interpolation = tex['filter']
     uv_socket = node_tex.inputs[0]
 
     x -= 370
 
     # Wrapping
-    wrapS, wrapT = tex["wrapS"], tex["wrapT"]
+    wrapS, wrapT = tex['wrapS'], tex['wrapT']
     if wrapS == wrapT == 'Repeat':
         node_tex.extension = 'REPEAT'
     elif wrapS == wrapT == 'Clamp':
@@ -490,7 +513,7 @@ def make_texture_node(mat, tex, location):
         node_tex.extension = 'EXTEND'
 
         frame = nodes.new('NodeFrame')
-        frame.label = f'Wrap Mode {wrapS} x {wrapT}'
+        frame.label = f'{wrapS} ({wrapS[0]}) x {wrapT} ({wrapT[0]})'
 
         # Combine XYZ
         node_com = nodes.new('ShaderNodeCombineXYZ')
@@ -568,26 +591,26 @@ def make_simple_blender_lerp_node(mat, blender, input_map):
     # It's simple if...
     is_simple = (
         # (p*a + m*(1-a))/(a + (1-a)) = lerp(m, p, a)
-        b == "One Minus A" and
+        b == 'One Minus A' and
         # Reading from framebuffer is not required
-        p != "Framebuffer Color" and m != "Framebuffer Color"
+        p != 'Framebuffer Color' and m != 'Framebuffer Color'
     )
     if not is_simple:
         return None
 
-    node_mix = mat.node_tree.nodes.new("ShaderNodeMixRGB")
+    node_mix = mat.node_tree.nodes.new('ShaderNodeMixRGB')
     connect_input(mat, input_map[a], node_mix.inputs[0])
     connect_input(mat, input_map[m], node_mix.inputs[1])
     connect_input(mat, input_map[p], node_mix.inputs[2])
-    input_map["Combined Color"] = node_mix.outputs[0]
+    input_map['Combined Color'] = node_mix.outputs[0]
 
     return node_mix
 
 
 def get_combiner_group():
-    if "RDP Color Combiner" not in bpy.data.node_groups:
+    if 'RDP Color Combiner' not in bpy.data.node_groups:
         create_combiner_group()
-    return bpy.data.node_groups["RDP Color Combiner"]
+    return bpy.data.node_groups['RDP Color Combiner']
 
 
 def create_combiner_group():
@@ -600,29 +623,29 @@ def create_combiner_group():
     # NOTE: The color math is currently being done in linear space,
     # should be sRGB?
 
-    group = bpy.data.node_groups.new("RDP Color Combiner", "ShaderNodeTree")
+    group = bpy.data.node_groups.new('RDP Color Combiner', 'ShaderNodeTree')
     nodes = group.nodes
     links = group.links
 
-    group.inputs.new('NodeSocketColor', "Color A")
-    group.inputs.new('NodeSocketColor', "Color B")
-    group.inputs.new('NodeSocketColor', "Color C")
-    group.inputs.new('NodeSocketColor', "Color D")
-    group.inputs.new('NodeSocketFloat', "Alpha A")
-    group.inputs.new('NodeSocketFloat', "Alpha B")
-    group.inputs.new('NodeSocketFloat', "Alpha C")
-    group.inputs.new('NodeSocketFloat', "Alpha D")
-    group.outputs.new('NodeSocketColor', "Color")
-    group.outputs.new('NodeSocketFloat', "Alpha")
+    group.inputs.new('NodeSocketColor', 'Color A')
+    group.inputs.new('NodeSocketColor', 'Color B')
+    group.inputs.new('NodeSocketColor', 'Color C')
+    group.inputs.new('NodeSocketColor', 'Color D')
+    group.inputs.new('NodeSocketFloat', 'Alpha A')
+    group.inputs.new('NodeSocketFloat', 'Alpha B')
+    group.inputs.new('NodeSocketFloat', 'Alpha C')
+    group.inputs.new('NodeSocketFloat', 'Alpha D')
+    group.outputs.new('NodeSocketColor', 'Color')
+    group.outputs.new('NodeSocketFloat', 'Alpha')
 
-    node_input = nodes.new("NodeGroupInput")
-    node_subc = nodes.new("ShaderNodeMixRGB")
-    node_mulc = nodes.new("ShaderNodeMixRGB")
-    node_addc = nodes.new("ShaderNodeMixRGB")
-    node_suba = nodes.new("ShaderNodeMath")
-    node_mula = nodes.new("ShaderNodeMath")
-    node_adda = nodes.new("ShaderNodeMath")
-    node_output = nodes.new("NodeGroupOutput")
+    node_input = nodes.new('NodeGroupInput')
+    node_subc = nodes.new('ShaderNodeMixRGB')
+    node_mulc = nodes.new('ShaderNodeMixRGB')
+    node_addc = nodes.new('ShaderNodeMixRGB')
+    node_suba = nodes.new('ShaderNodeMath')
+    node_mula = nodes.new('ShaderNodeMath')
+    node_adda = nodes.new('ShaderNodeMath')
+    node_output = nodes.new('NodeGroupOutput')
 
     node_subc.blend_type = node_suba.operation = 'SUBTRACT'
     node_mulc.blend_type = node_mula.operation = 'MULTIPLY'
@@ -697,20 +720,20 @@ def show_blender_formula(p, a, m, b):
     # num = (pa + mb)
     if pa == '0':    num = mb
     elif mb == '0':  num = pa
-    else:            num = f"({pa} + {mb})"
+    else:            num = f'({pa} + {mb})'
 
     # den = (a + b)
     if a == '0':     den = b
     elif b == '0':   den = a
-    elif b == "One Minus A":  den = "1"
+    elif b == 'One Minus A':  den = '1'
     elif (a,b) == ('0', '0'): den = '0'
-    else:            den = f"({a} + {b})"
+    else:            den = f'({a} + {b})'
 
     # out = num / den
     if den == '1':   out = num
     elif num == '0': out = '0'
     elif num == den: out = '1'
-    else:            out = f"{num} / {den}"
+    else:            out = f'{num} / {den}'
 
     return out
 
@@ -721,16 +744,23 @@ def get_texture_filter(other_mode):
     # 2 = TF_AVERAGE  Box Filtering
     # 3 = TF_BILERP   Bilinear (approximated with 3 samples)
     filter = (other_mode >> 44) & 0x3
-    return "Closest" if filter == 0 else "Linear"
+    return 'Closest' if filter == 0 else 'Linear'
 
 
 def get_texture_wrap_mode(wrap):
     # bit 0 = MIRROR
     # bit 1 = CLAMP
-    if wrap == 0:   return "Repeat"
-    elif wrap == 1: return "Mirror"
-    elif wrap == 2: return "Clamp"
-    else:           return "Mirror"  # ???
+    print(wrap)
+    if wrap == 0:   return 'Repeat'
+    elif wrap == 1: return 'Mirror'
+    elif wrap == 2: return 'Clamp'
+    else:           return 'Clamp'  # ???
+
+
+def get_combined_texture_wrap_modes(wrapS_abbr, wrapT_abbr):
+    if wrapS_abbr == wrapT_abbr:
+        return wrapS_abbr
+    return f'{wrapS_abbr}{wrapT_abbr}'
 
 
 def decode_combiner_mode(mux):
@@ -878,26 +908,26 @@ def decode_blender_mode(other_mode):
 
 def decode_blender_pamb(p, a, m, b):
     pm_map = {
-        0: "Combined Color",
-        1: "Framebuffer Color",
-        2: "Blend Color",
-        3: "Fog Color",
+        0: 'Combined Color',
+        1: 'Framebuffer Color',
+        2: 'Blend Color',
+        3: 'Fog Color',
     }
     p = pm_map[p]
     m = pm_map[m]
 
     a = {
-        0: "Combined Alpha",
-        1: "Fog Alpha",
-        2: "Shading Alpha",
-        3: "0",
+        0: 'Combined Alpha',
+        1: 'Fog Alpha',
+        2: 'Shading Alpha',
+        3: '0',
     }[a]
 
     b = {
-        0: f"One Minus A",
-        1: "Framebuffer Alpha",
-        2: "1",
-        3: "0",
+        0: f'One Minus A',
+        1: 'Framebuffer Alpha',
+        2: '1',
+        3: '0',
     }[b]
 
     return p, a, m, b
