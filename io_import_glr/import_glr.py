@@ -1,46 +1,82 @@
 import os
 import struct
 import bpy
-
+import bmesh
+import re
 
 ### Import Plugin Entry Point
 def load(context, **keywords):
+    if keywords['files'][0].name == '':
+        raise RuntimeError('No .glr files have been selected for import!')
+
+    filter_list = []
+
+    if len(keywords['filter_list']) != 0:
+        raw_filter_list_str = keywords['filter_list'] + ','
+        if not re.search('^([A0-F9]{16},|NO_TEXTURE,)+$', raw_filter_list_str):
+            raise RuntimeError('Invalid filter textures list provided')
+        dup_filter_list = raw_filter_list_str[:-1].split(',')
+        filter_list = [*set(dup_filter_list)] # remove duplicates
+
     dir_name = os.path.dirname(keywords['filepath'])
     obs = []
 
     for glr_file in keywords['files']:
-        if glr_file.name[-4:] != '.glr':
-            print(f'INFO: {abs_filepath} is not a .glr file! Skipping...')
-            continue
-
         filepath = os.path.join(dir_name, glr_file.name)
-        ob = load_glr(filepath)
+        triangle_options = (
+            keywords['enable_mat_transparency'],
+            keywords['enable_bf_culling'],
+            keywords['filter_mode'],
+            filter_list,
+            keywords['gen_light_color_attribute'],
+            keywords['gen_overlay_color_attribute']
+        )
+        ob = load_glr(filepath, triangle_options)
         obs.append(ob)
 
-    if not obs:
-        raise RuntimeError('No .glr files have been selected for import!')
-
-    # Objects created by op are selected, active, and placed at cursor
+    # Objects created by op are selected, active, placed at cursor, and transformed
     if bpy.ops.object.select_all.poll():
         bpy.ops.object.select_all(action='DESELECT')
     for ob in obs:
         ob.select_set(True)
         ob.location = bpy.context.scene.cursor.location
+        ob.location = ob.location + keywords['move']
+        ob.rotation_euler = keywords['rotation']
+        ob.scale = keywords['scale']
+        if keywords['merge_doubles']:
+            ob_mesh = ob.data
+            bm = bmesh.new()
+            bm.from_mesh(ob_mesh)
+            merge_distance = round(keywords['merge_distance'], 6) # chopping off extra precision
+            bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=merge_distance)
+            bm.to_mesh(ob_mesh)
     bpy.context.view_layer.objects.active = obs[0]
+
+    # Checking and enabling Color Management options
+    if keywords['enable_srgb']:
+        bpy.context.scene.display_settings.display_device = 'sRGB'
+        bpy.context.scene.view_settings.view_transform = 'Standard'
+        bpy.context.scene.sequencer_colorspace_settings.name = 'sRGB'
 
     return {'FINISHED'}
 
 
-def load_glr(filepath):
+def load_glr(filepath, triangle_options):
     texture_dir = os.path.abspath(os.path.dirname(filepath))
     with open(filepath, 'rb') as fb:
-        return GlrImporter(fb, texture_dir).load()
+        return GlrImporter(fb, texture_dir, triangle_options).load()
 
 
 class GlrImporter:
-    def __init__(self, fb, texture_dir):
+    def __init__(self, fb, texture_dir, triangle_options):
         self.fb = fb
         self.texture_dir = texture_dir
+        self.show_alpha = triangle_options[0]
+        self.display_culling = triangle_options[1]
+        self.filter_mode = triangle_options[2]
+        self.filter_list = triangle_options[3]
+        self.gen_light_color_attribute = triangle_options[4]
+        self.gen_overlay_color_attribute = triangle_options[5]
         self.obj_name = None
         self.num_tris = None
         self.microcode = None
@@ -88,23 +124,25 @@ class GlrImporter:
         matinfo_cache = {}
         face_materials = []
 
-        for _ in range(self.num_tris):
-            face = []
+        for i in range(self.num_tris):
+            tmp_shade_cols = []
+            tmp_uvs0 = []
+            tmp_uvs1 = []
+            tmp_verts = []
+            tmp_face = []
 
             # Read vertices
-            for _ in range(3):
+            for j in range(3):
                 (
                     x, y, z, r, g, b, a, s0, t0, s1, t1,
                 ) = struct.unpack('<11f', fb.read(44))
-
-                shade_colors += [r, g, b, a]
-                uvs0 += [s0, t0]
-                uvs1 += [s1, t1]
-
-                verts.append((x, -z, y))  # Yup2Zup
-                face.append(len(verts) - 1)
-
-            faces.append(face)
+                
+                # delay writing lists for filter check
+                tmp_shade_cols += [r, g, b, a]
+                tmp_uvs0 += [s0, t0]
+                tmp_uvs1 += [s1, t1]
+                tmp_verts.append((x, -z, y))  # Yup2Zup
+                tmp_face.append((len(verts)) + j)
 
             # Read triangle data
             (
@@ -126,11 +164,44 @@ class GlrImporter:
                 tex1_wrapS, tex1_wrapT,
             ) = struct.unpack('<4f4f4f4f2f2f2iQQIQ4BQ4B', fb.read(132))
 
+            tex0_crc_hex = f'{tex0_crc:016X}'
+
+            if self.filter_mode: # Blacklist mode
+                if tex0_crc_hex in self.filter_list or \
+                    (tex0_crc == 0 and 'NO_TEXTURE' in self.filter_list):
+                        continue # skip tri, go to the next one
+            else: # Whitelist mode, opposite of blacklist
+                if tex0_crc_hex not in self.filter_list or \
+                    (tex0_crc == 0 and 'NO_TEXTURE' not in self.filter_list):
+                        continue
+
+            # write delayed info
+            shade_colors.extend(tmp_shade_cols)
+            uvs0.extend(tmp_uvs0)
+            uvs1.extend(tmp_uvs1)
+            verts.extend(tmp_verts)
+            faces.append(tmp_face)
+
             # Store per-tri colors as vertex colors (once per corner)
             prim_colors += [prim_r, prim_g, prim_b, prim_a] * 3
             env_colors += [env_r, env_g, env_b, env_a] * 3
             blend_colors += [blend_r, blend_g, blend_b, blend_a] * 3
             fog_colors += [fog_r, fog_g, fog_b, fog_a] * 3
+            
+            # Create combination light/overlay color attributes
+            # TODO: Implement correctly based on color attributes actively used by each seperate material
+            '''
+            for _ in range(3):
+                merged_r = shade_colors[curr_vert] * prim_colors[curr_vert] * env_colors[curr_vert]
+                curr_vert += 1
+                merged_g = shade_colors[curr_vert] * prim_colors[curr_vert] * env_colors[curr_vert]
+                curr_vert += 1
+                merged_b = shade_colors[curr_vert] * prim_colors[curr_vert] * env_colors[curr_vert]
+                curr_vert += 1
+                merged_a = shade_colors[curr_vert] * prim_colors[curr_vert] * env_colors[curr_vert]
+                curr_vert += 1
+                merged_colors += [merged_r, merged_g, merged_b, merged_a]
+            '''
 
             # Gather all the info we need to make the material for this tri
             matinfo = (
@@ -160,8 +231,12 @@ class GlrImporter:
         mesh.vertex_colors.new(name='Environment').data.foreach_set('color', env_colors)
         mesh.vertex_colors.new(name='Blend').data.foreach_set('color', blend_colors)
         mesh.vertex_colors.new(name='Fog').data.foreach_set('color', fog_colors)
-        mesh.uv_layers.new(name='UV1').data.foreach_set('uv', uvs0)
-        mesh.uv_layers.new(name='UV2').data.foreach_set('uv', uvs1)
+        if self.gen_light_color_attribute:
+            mesh.vertex_colors.new(name='Light').data.foreach_set('color', light_colors)
+        if self.gen_overlay_color_attribute:
+            mesh.vertex_colors.new(name='Light').data.foreach_set('color', light_colors)
+        mesh.uv_layers.new(name='UV0').data.foreach_set('uv', uvs0)
+        mesh.uv_layers.new(name='UV1').data.foreach_set('uv', uvs1)
 
         mesh.validate()
 
@@ -203,10 +278,29 @@ class GlrImporter:
 
         tex0 = make_tex_dict(tex0_crc, tex0_wrapS, tex0_wrapT)
         tex1 = make_tex_dict(tex1_crc, tex1_wrapS, tex1_wrapT)
-        tex0['uv_map'] = 'UV1'
-        tex1['uv_map'] = 'UV2'
+        tex0['uv_map'] = 'UV0'
+        tex1['uv_map'] = 'UV1'
 
-        mat_name = self.get_material_name_for_crcs_and_wrapmodes([tex0_crc, tex1_crc], [tex0['wrapST'], tex1['wrapST']])
+        # Determine backface culling
+        # F3D/F3DEX: 0x2000 (0010 0000 0000 0000)
+        # F3DEX2: 0x400 (0100 0000 0000)
+        # TODO: Check others, assumed under F3D/F3DEX family
+        bfc_mask = 0x2000
+        if( self.microcode == 2 or  # F3DEX2
+            self.microcode == 5 or  # L3DEX2
+            self.microcode == 7 or  # S2DEX2
+            self.microcode == 13 or # F3DEX2CBFD
+            self.microcode == 17 or # F3DZEX2OOT
+            self.microcode == 18 or # F3DZEX2MM
+            self.microcode == 21):  # F3DEX2ACCLAIM
+                bfc_mask >>= 3
+
+        cull_backface = bool(geometry_mode & bfc_mask)
+
+        mat_name = self.get_material_name_for_crcs_and_wrapmodes(
+            [tex0_crc, tex1_crc],
+            [tex0['wrapST'], tex1['wrapST']],
+            cull_backface)
 
         found_mat_index = bpy.data.materials.find(mat_name)
 
@@ -214,12 +308,14 @@ class GlrImporter:
             mat = bpy.data.materials[found_mat_index]
         else:
             mat = bpy.data.materials.new(mat_name)
+
             setup_n64_material(
                 mat,
                 combiner1, combiner2,
                 blender1, blender2,
                 tex0, tex1,
-                cull_backfacing=bool(geometry_mode & 0x2000),  # TODO
+                cull_backfacing=cull_backface & self.display_culling,
+                show_alpha=self.show_alpha,
             )
         return mat
 
@@ -229,7 +325,7 @@ class GlrImporter:
         else:
             return ''
 
-    def get_material_name_for_crcs_and_wrapmodes(self, tex_crc, tex_wrapmodes):
+    def get_material_name_for_crcs_and_wrapmodes(self, tex_crc, tex_wrapmodes, cull_backfaces):
         if tex_crc[0] == 0: # Either invalid crc combo (tex0_crc == 0, tex1_crc != 0), or both crcs are null (0)
             return 'NO_TEXTURE'
         returning_str = ''
@@ -240,6 +336,8 @@ class GlrImporter:
                 returning_str += f'{tex_crc[i]:016X}'
                 if tex_wrapmodes[i] != 'R': # if both wrap S and T are Repeat, don't include wrapmode indicator
                     returning_str += f'({tex_wrapmodes[i]})'
+        if not cull_backfaces:
+            returning_str += ' | (N)'
         return returning_str
 
 # Imported materials are supposed to perform (highly simplified) high
@@ -297,6 +395,7 @@ def setup_n64_material(
     blender1, blender2,
     tex0, tex1,
     cull_backfacing,
+    show_alpha,
 ):
     mat.shadow_method = 'NONE'
     mat.blend_method = 'OPAQUE'
@@ -387,7 +486,8 @@ def setup_n64_material(
 
         input_map['Combined Color'] = node_mixtr.outputs[0]
 
-        mat.blend_method = 'HASHED'
+        if show_alpha:
+            mat.blend_method = 'HASHED'
 
     # TODO: alpha compare
 
@@ -435,8 +535,8 @@ def make_rdp_input_nodes(mat, sources, tex0, tex1, location):
         tex = tex0 if i == 0 else tex1
         if f'Texel {i} Color' in sources or f'Texel {i} Alpha' in sources:
             if tex['crc'] != 0:
-                node = make_texture_node(mat, tex, location=(x, y))
-            y -= 300
+                node = make_texture_node(mat, tex, i, location=(x, y))
+                y -= 300
             input_map[f'Texel {i} Color'] = node.outputs['Color']
             input_map[f'Texel {i} Alpha'] = node.outputs['Alpha']
 
@@ -447,6 +547,7 @@ def make_rdp_input_nodes(mat, sources, tex0, tex1, location):
             node.location = x, y
             y -= 200
             node.layer_name = vc
+            node.name = node.label = vc
             input_map[f'{vc} Color'] = node.outputs['Color']
             input_map[f'{vc} Alpha'] = node.outputs['Alpha']
 
@@ -485,13 +586,14 @@ def load_image(filepath):
     return image
 
 
-def make_texture_node(mat, tex, location):
+def make_texture_node(mat, tex, tex_num, location):
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
     x, y = location
 
     # Image Texture node
     node_tex = nodes.new('ShaderNodeTexImage')
+    node_tex.name = node_tex.label = 'Texture 0' if tex_num == 0 else 'Texture 1'
     node_tex.width = 290
     node_tex.location = x - 150, y
     if tex['filepath']:
@@ -574,6 +676,7 @@ def make_texture_node(mat, tex, location):
 
     # UVMap node
     node_uv = nodes.new('ShaderNodeUVMap')
+    node_uv.name = node_uv.label = 'UV Map Texture 0' if tex_num == 0 else 'UV Map Texture 1'
     node_uv.location = x - 160, y - 70
     node_uv.uv_map = tex['uv_map']
     links.new(uv_socket, node_uv.outputs[0])
@@ -752,8 +855,7 @@ def get_texture_wrap_mode(wrap):
     # bit 1 = CLAMP
     if wrap == 0:   return 'Repeat'
     elif wrap == 1: return 'Mirror'
-    elif wrap == 2: return 'Clamp'
-    else:           return 'Clamp'  # ???
+    else:           return 'Clamp'
 
 
 def get_combined_texture_wrap_modes(wrapS_abbr, wrapT_abbr):
