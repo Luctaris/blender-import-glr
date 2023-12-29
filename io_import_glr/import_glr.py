@@ -125,24 +125,8 @@ class GlrImporter:
         face_materials = []
 
         for i in range(self.num_tris):
-            tmp_shade_cols = []
-            tmp_uvs0 = []
-            tmp_uvs1 = []
-            tmp_verts = []
-            tmp_face = []
-
             # Read vertices
-            for j in range(3):
-                (
-                    x, y, z, r, g, b, a, s0, t0, s1, t1,
-                ) = struct.unpack('<11f', fb.read(44))
-                
-                # delay writing lists for filter check
-                tmp_shade_cols += [r, g, b, a]
-                tmp_uvs0 += [s0, t0]
-                tmp_uvs1 += [s1, t1]
-                tmp_verts.append((x, -z, y))  # Yup2Zup
-                tmp_face.append((len(verts)) + j)
+            tri_verts = [fb.read(44) for _ in range(3)]
 
             # Read triangle data
             (
@@ -175,19 +159,25 @@ class GlrImporter:
                     (tex0_crc == 0 and 'NO_TEXTURE' not in self.filter_list):
                         continue
 
-            # write delayed info
-            shade_colors.extend(tmp_shade_cols)
-            uvs0.extend(tmp_uvs0)
-            uvs1.extend(tmp_uvs1)
-            verts.extend(tmp_verts)
-            faces.append(tmp_face)
+            # Process vertices
+            for vert in tri_verts:
+                (
+                    x, y, z, r, g, b, a, s0, t0, s1, t1,
+                ) = struct.unpack('<11f', vert)
+
+                shade_colors += [r, g, b, a]
+                uvs0 += [s0, t0]
+                uvs1 += [s1, t1]
+                verts.append((x, -z, y))  # Yup2Zup
 
             # Store per-tri colors as vertex colors (once per corner)
             prim_colors += [prim_r, prim_g, prim_b, prim_a] * 3
             env_colors += [env_r, env_g, env_b, env_a] * 3
             blend_colors += [blend_r, blend_g, blend_b, blend_a] * 3
             fog_colors += [fog_r, fog_g, fog_b, fog_a] * 3
-            
+
+            faces.append((len(verts) - 3, len(verts) - 2, len(verts) - 1))
+
             # Create combination light/overlay color attributes
             # TODO: Implement correctly based on color attributes actively used by each seperate material
             '''
