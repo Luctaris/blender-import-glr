@@ -141,6 +141,15 @@ class GLR_OT_ImportGLR(Operator, ImportHelper):
         default=False
     )
 
+    enable_fog: BoolProperty(
+        name='Enable Fog',
+        description=(
+            'Enables fog. The fog effect can also be removed '
+            'after import by deleting the "FogLevel" attribute'
+        ),
+        default=True,
+    )
+
     gen_light_color_attribute: BoolProperty(
         name='Generate \'Lighting\' Color Attribute',
         description='Generate a color attribute which contains all combined lighting colors influencing triangles',
@@ -220,6 +229,7 @@ class GLR_PT_scene(Panel):
         layout.prop(operator, 'enable_srgb')
         layout.prop(operator, 'enable_mat_transparency')
         layout.prop(operator, 'enable_bf_culling')
+        layout.prop(operator, 'enable_fog')
 
 class GLR_PT_colors(Panel):
     bl_space_type = 'FILE_BROWSER'

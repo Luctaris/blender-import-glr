@@ -29,7 +29,8 @@ def load(context, **keywords):
             keywords['filter_mode'],
             filter_list,
             keywords['gen_light_color_attribute'],
-            keywords['gen_overlay_color_attribute']
+            keywords['gen_overlay_color_attribute'],
+            keywords['enable_fog'],
         )
         ob = load_glr(filepath, triangle_options)
         obs.append(ob)
@@ -77,6 +78,7 @@ class GlrImporter:
         self.filter_list = triangle_options[3]
         self.gen_light_color_attribute = triangle_options[4]
         self.gen_overlay_color_attribute = triangle_options[5]
+        self.enable_fog = triangle_options[6]
         self.obj_name = None
         self.num_tris = None
         self.microcode = None
@@ -231,7 +233,7 @@ class GlrImporter:
             mesh.vertex_colors.new(name='Light').data.foreach_set('color', light_colors)
         mesh.uv_layers.new(name='UV0').data.foreach_set('uv', uvs0)
         mesh.uv_layers.new(name='UV1').data.foreach_set('uv', uvs1)
-        if any(fog_levels):
+        if self.enable_fog and any(fog_levels):
             mesh.attributes.new(
                 name='FogLevel', type='FLOAT', domain='POINT',
             ).data.foreach_set('value', fog_levels)
