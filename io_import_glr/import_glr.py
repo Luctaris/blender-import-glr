@@ -94,9 +94,9 @@ class GlrImporter:
 
         # Check version
         version = struct.unpack('<H', fb.read(2))[0]
-        if version > 0 and version < 2:
+        if version > 0 and version < 3:
             raise RuntimeError(f'Outdated glr file format detected ({version}), please update the glr import addon')
-        elif version != 2:
+        elif version != 3:
             raise RuntimeError(f'Unknown N64 Ripper version ({version}) encountered')
 
         romname = fb.read(20)
@@ -118,6 +118,7 @@ class GlrImporter:
         env_colors = []
         blend_colors = []
         fog_colors = []
+        fog_levels = []
         uvs0 = []
         uvs1 = []
 
@@ -169,6 +170,9 @@ class GlrImporter:
                 uvs0 += [s0, t0]
                 uvs1 += [s1, t1]
                 verts.append((x, -z, y))  # Yup2Zup
+
+                # When fog enabled, alpha is the fog level
+                fog_levels.append(a if geometry_mode & 0x10000 else 0)
 
             # Store per-tri colors as vertex colors (once per corner)
             prim_colors += [prim_r, prim_g, prim_b, prim_a] * 3
@@ -227,6 +231,10 @@ class GlrImporter:
             mesh.vertex_colors.new(name='Light').data.foreach_set('color', light_colors)
         mesh.uv_layers.new(name='UV0').data.foreach_set('uv', uvs0)
         mesh.uv_layers.new(name='UV1').data.foreach_set('uv', uvs1)
+        if any(fog_levels):
+            mesh.attributes.new(
+                name='FogLevel', type='FLOAT', domain='POINT',
+            ).data.foreach_set('value', fog_levels)
 
         mesh.validate()
 
@@ -252,6 +260,14 @@ class GlrImporter:
 
         combiner1, combiner2 = decode_combiner_mode(combiner_mux)
         blender1, blender2 = decode_blender_mode(other_mode)
+
+        # When fog is enabled, Fog Level should be used instead
+        # of the Shading Alpha
+        if geometry_mode & 0x10000:
+            combiner1 = tuple('Fog Level' if s == 'Shading Alpha' else s for s in combiner1)
+            combiner2 = tuple('Fog Level' if s == 'Shading Alpha' else s for s in combiner2)
+            blender1 = tuple('Fog Level' if s == 'Shading Alpha' else s for s in blender1)
+            blender2 = tuple('Fog Level' if s == 'Shading Alpha' else s for s in blender2)
 
         if not two_cycle_mode:
             combiner2 = blender2 = None
@@ -451,13 +467,17 @@ def setup_n64_material(
 
     x, y = x + 200, y - 100
 
-    # Handle some cases where the blender formula is particularly simple
-    # TODO: disable until fog is correctly implemented
-    '''
+    # Handle some cases where the blender formula is simple
+    # (fog, in particular)
     node_blnd1 = make_simple_blender_lerp_node(mat, blender1, input_map)
+    if node_blnd1:
+        node_blnd1.location = x, y
+        x, y = x + 200, y - 100
     if blender2:
         node_blnd2 = make_simple_blender_lerp_node(mat, blender2, input_map)
-    '''
+        if node_blnd2:
+            node_blnd2.location = x, y
+            x, y = x + 200, y - 100
 
     # If the last step of the blender reads the framebuffer color at
     # all, we crudely assume it's doing alpha blending
@@ -540,6 +560,14 @@ def make_rdp_input_nodes(mat, sources, tex0, tex1, location):
             node.name = node.label = vc
             input_map[f'{vc} Color'] = node.outputs['Color']
             input_map[f'{vc} Alpha'] = node.outputs['Alpha']
+
+    if 'Fog Level' in sources:
+        node = nodes.new('ShaderNodeAttribute')
+        node.location = x, y
+        y -= 200
+        node.attribute_name = 'FogLevel'
+        node.name = node.label = 'FogLevel'
+        input_map['Fog Level'] = node.outputs['Fac']
 
     # Not yet implemented
     unimplemented = [
