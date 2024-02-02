@@ -136,7 +136,7 @@ class GlrImporter:
                 (
                     x, y, z, r, g, b, a, s0, t0, s1, t1,
                 ) = struct.unpack('<11f', fb.read(44))
-                
+
                 # delay writing lists for filter check
                 tmp_shade_cols += [r, g, b, a]
                 tmp_uvs0 += [s0, t0]
@@ -187,7 +187,7 @@ class GlrImporter:
             env_colors += [env_r, env_g, env_b, env_a] * 3
             blend_colors += [blend_r, blend_g, blend_b, blend_a] * 3
             fog_colors += [fog_r, fog_g, fog_b, fog_a] * 3
-            
+
             # Create combination light/overlay color attributes
             # TODO: Implement correctly based on color attributes actively used by each seperate material
             '''
@@ -551,12 +551,21 @@ def make_rdp_input_nodes(mat, sources, tex0, tex1, location):
             input_map[f'{vc} Color'] = node.outputs['Color']
             input_map[f'{vc} Alpha'] = node.outputs['Alpha']
 
+    # LOD Fraction is not implemented; always use 0 for now in
+    # the hopes this will select the highest detail mipmap...
+    for src in ['LOD Fraction', 'Primitive LOD Fraction']:
+        if src in sources:
+            node = nodes.new('ShaderNodeValue')
+            node.name = node.label = src
+            node.location = x, y
+            y -= 200
+            node.outputs['Value'].default_value = 0
+            input_map[src] = node.outputs['Value']
+
     # Not yet implemented
     unimplemented = [
         'Key Center',
         'Key Scale',
-        'LOD Fraction',
-        'Primitive LOD Fraction',
         'Noise',
         'Convert K4',
         'Convert K5',
