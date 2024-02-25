@@ -29,7 +29,8 @@ def load(context, **keywords):
             keywords['filter_mode'],
             filter_list,
             keywords['gen_light_color_attribute'],
-            keywords['gen_overlay_color_attribute']
+            keywords['gen_overlay_color_attribute'],
+            keywords['enable_fog'],
         )
         ob = load_glr(filepath, triangle_options)
         obs.append(ob)
@@ -77,6 +78,7 @@ class GlrImporter:
         self.filter_list = triangle_options[3]
         self.gen_light_color_attribute = triangle_options[4]
         self.gen_overlay_color_attribute = triangle_options[5]
+        self.enable_fog = triangle_options[6]
         self.obj_name = None
         self.num_tris = None
         self.microcode = None
@@ -94,9 +96,9 @@ class GlrImporter:
 
         # Check version
         version = struct.unpack('<H', fb.read(2))[0]
-        if version > 0 and version < 2:
+        if version > 0 and version < 3:
             raise RuntimeError(f'Outdated glr file format detected ({version}), please update the glr import addon')
-        elif version != 2:
+        elif version != 3:
             raise RuntimeError(f'Unknown N64 Ripper version ({version}) encountered')
 
         romname = fb.read(20)
@@ -118,6 +120,7 @@ class GlrImporter:
         env_colors = []
         blend_colors = []
         fog_colors = []
+        fog_levels = []
         uvs0 = []
         uvs1 = []
 
@@ -125,24 +128,8 @@ class GlrImporter:
         face_materials = []
 
         for i in range(self.num_tris):
-            tmp_shade_cols = []
-            tmp_uvs0 = []
-            tmp_uvs1 = []
-            tmp_verts = []
-            tmp_face = []
-
             # Read vertices
-            for j in range(3):
-                (
-                    x, y, z, r, g, b, a, s0, t0, s1, t1,
-                ) = struct.unpack('<11f', fb.read(44))
-                
-                # delay writing lists for filter check
-                tmp_shade_cols += [r, g, b, a]
-                tmp_uvs0 += [s0, t0]
-                tmp_uvs1 += [s1, t1]
-                tmp_verts.append((x, -z, y))  # Yup2Zup
-                tmp_face.append((len(verts)) + j)
+            tri_verts = [fb.read(44) for _ in range(3)]
 
             # Read triangle data
             (
@@ -175,19 +162,28 @@ class GlrImporter:
                     (tex0_crc == 0 and 'NO_TEXTURE' not in self.filter_list):
                         continue
 
-            # write delayed info
-            shade_colors.extend(tmp_shade_cols)
-            uvs0.extend(tmp_uvs0)
-            uvs1.extend(tmp_uvs1)
-            verts.extend(tmp_verts)
-            faces.append(tmp_face)
+            # Process vertices
+            for vert in tri_verts:
+                (
+                    x, y, z, r, g, b, a, s0, t0, s1, t1,
+                ) = struct.unpack('<11f', vert)
+
+                shade_colors += [r, g, b, a]
+                uvs0 += [s0, t0]
+                uvs1 += [s1, t1]
+                verts.append((x, -z, y))  # Yup2Zup
+
+                # When fog enabled, alpha is the fog level
+                fog_levels.append(a if geometry_mode & 0x10000 else 0)
 
             # Store per-tri colors as vertex colors (once per corner)
             prim_colors += [prim_r, prim_g, prim_b, prim_a] * 3
             env_colors += [env_r, env_g, env_b, env_a] * 3
             blend_colors += [blend_r, blend_g, blend_b, blend_a] * 3
             fog_colors += [fog_r, fog_g, fog_b, fog_a] * 3
-            
+
+            faces.append((len(verts) - 3, len(verts) - 2, len(verts) - 1))
+
             # Create combination light/overlay color attributes
             # TODO: Implement correctly based on color attributes actively used by each seperate material
             '''
@@ -237,6 +233,10 @@ class GlrImporter:
             mesh.vertex_colors.new(name='Light').data.foreach_set('color', light_colors)
         mesh.uv_layers.new(name='UV0').data.foreach_set('uv', uvs0)
         mesh.uv_layers.new(name='UV1').data.foreach_set('uv', uvs1)
+        if self.enable_fog and any(fog_levels):
+            mesh.attributes.new(
+                name='FogLevel', type='FLOAT', domain='POINT',
+            ).data.foreach_set('value', fog_levels)
 
         mesh.validate()
 
@@ -262,6 +262,14 @@ class GlrImporter:
 
         combiner1, combiner2 = decode_combiner_mode(combiner_mux)
         blender1, blender2 = decode_blender_mode(other_mode)
+
+        # When fog is enabled, Fog Level should be used instead
+        # of the Shading Alpha
+        if geometry_mode & 0x10000:
+            combiner1 = tuple('Fog Level' if s == 'Shading Alpha' else s for s in combiner1)
+            combiner2 = tuple('Fog Level' if s == 'Shading Alpha' else s for s in combiner2)
+            blender1 = tuple('Fog Level' if s == 'Shading Alpha' else s for s in blender1)
+            blender2 = tuple('Fog Level' if s == 'Shading Alpha' else s for s in blender2)
 
         if not two_cycle_mode:
             combiner2 = blender2 = None
@@ -461,13 +469,17 @@ def setup_n64_material(
 
     x, y = x + 200, y - 100
 
-    # Handle some cases where the blender formula is particularly simple
-    # TODO: disable until fog is correctly implemented
-    '''
+    # Handle some cases where the blender formula is simple
+    # (fog, in particular)
     node_blnd1 = make_simple_blender_lerp_node(mat, blender1, input_map)
+    if node_blnd1:
+        node_blnd1.location = x, y
+        x, y = x + 200, y - 100
     if blender2:
         node_blnd2 = make_simple_blender_lerp_node(mat, blender2, input_map)
-    '''
+        if node_blnd2:
+            node_blnd2.location = x, y
+            x, y = x + 200, y - 100
 
     # If the last step of the blender reads the framebuffer color at
     # all, we crudely assume it's doing alpha blending
@@ -550,6 +562,14 @@ def make_rdp_input_nodes(mat, sources, tex0, tex1, location):
             node.name = node.label = vc
             input_map[f'{vc} Color'] = node.outputs['Color']
             input_map[f'{vc} Alpha'] = node.outputs['Alpha']
+
+    if 'Fog Level' in sources:
+        node = nodes.new('ShaderNodeAttribute')
+        node.location = x, y
+        y -= 200
+        node.attribute_name = 'FogLevel'
+        node.name = node.label = 'FogLevel'
+        input_map['Fog Level'] = node.outputs['Fac']
 
     # Not yet implemented
     unimplemented = [
