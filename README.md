@@ -1,7 +1,7 @@
 # Archived
 I have not had the time/interest to keep working on this for a while. The last commits from myself were over a year ago. As a result, I am **archiving** the project.
 
-Please take a look at [@scurest](https://github.com/scurest)'s fork [blender-import-glr](https://github.com/scurest/GLideN64-SceneRipper) who has been actively developing this in my absence.
+Please take a look at [@scurest](https://github.com/scurest)'s fork [blender-import-glr](https://github.com/scurest/blender-import-glr) who has been actively developing this in my absence.
 
 # blender-import-glr
 Addon which adds glr import support to Blender, the free 3D modelling suite. 
